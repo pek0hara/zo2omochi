@@ -545,9 +545,10 @@ function pushToNotionDaily() {
   recent.forEach(function(row) {
     var userId = row[1];
     var userName = getDisplayName(userId) || "誰か"; // 名前を取得、なければデフォルト
+    // am/pm 形式の時刻を取得
     var ts = Utilities.formatDate(new Date(row[0]), Session.getScriptTimeZone(), 'HH:mm');
     var msg = row[2];
-    var line = ts + '「' + msg + '」';
+    var line = '「' + msg + '」' + '(' + ts + ')'; // 時刻とメッセージを結合
     (grouped[userName] = grouped[userName] || []).push(line);
   });
 
@@ -573,7 +574,7 @@ function pushToNotionDaily() {
         ]
       },
       'ラベル': { // データベースのセレクトプロパティ名
-        select: { name: '今日のおもち' }
+        select: { name: '今日のおきもち' }
       },
       'URL': { // データベースのURLプロパティ名
         url: null // 空の場合は `null` を設定
