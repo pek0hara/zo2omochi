@@ -130,7 +130,8 @@ function doPost(e) {
 
       // 通常の処理: getTodaysMessages を呼び出して、今日のメッセージを取得
       var todaysMessages = getTodaysMessages(userId);
-      var geminiMessage = getGeminiMessage(messageText);
+      var prompt = "\n1行でかわいくツッコんでください！";
+      var geminiMessage = getGeminiMessage(messageText, prompt);
       var replyMessage =
         geminiMessage + "\n" + todaysMessages.map((msg) => msg).join("\n");
       sendReply(event.replyToken, replyMessage);
@@ -631,7 +632,7 @@ function deleteMessageByTime(userId, timeString, replyToken) {
 }
 
 // Gemini APIからメッセージを取得する関数
-function getGeminiMessage(messageText) {
+function getGeminiMessage(messageText, prompt) {
   var apiKey = PropertiesService.getScriptProperties().getProperty("GEMINI_API_KEY");
   if (!apiKey) {
     Logger.log("GEMINI_API_KEY is not set.");
@@ -640,12 +641,12 @@ function getGeminiMessage(messageText) {
 
   // APIエンドポイントのURL
   var apiUrl = "https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key=" + apiKey;
-  
+
   // リクエストボディの設定
   var payload = {
     contents: [{
       role: "user",
-      parts: [{ text: messageText + "\n1行でかわいくツッコんでください！" }]
+      parts: [{ text: messageText + prompt }]
     }]
   };
 
@@ -731,6 +732,10 @@ function pushToNotionDaily() {
     PropertiesService.getScriptProperties().getProperty("NOTION_TOKEN");
   var databaseId =
     PropertiesService.getScriptProperties().getProperty("NOTION_DATABASE_ID");
+  // Gemini API から取得したメッセージをタイトルに設定
+  var prompt = "\n20文字以内で今日のパワーワードを１つピックアップして！";
+  // 先頭20文字をタイトルにする
+  var title = getGeminiMessage(content, prompt).slice(0, 20);
 
   // payload 定義
   const payload = {
@@ -741,7 +746,7 @@ function pushToNotionDaily() {
         title: [
           {
             text: {
-              content: `${now.toISOString().slice(0, 10)} おもちのきもち`,
+              content: `${now.toISOString().slice(0, 10)}` + " " + title,
             },
           },
         ],
