@@ -494,6 +494,11 @@ function getTodaysMessages(userId) {
     var message = data[i][2]; // メッセージ列
 
     // 自分の書き込みかつ今日の日付のものを取得
+    if (timestamp < today) {
+      // 今日の日付より前になったらループを抜ける
+      break;
+    }
+
     if (messageUserId === userId && timestamp >= today) {
       var time = Utilities.formatDate(
         timestamp,
