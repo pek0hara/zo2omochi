@@ -125,9 +125,6 @@ function doPost(e) {
         ).setMimeType(ContentService.MimeType.JSON);
       }
 
-      // 現在のつぶやきをスプレッドシートに保存
-      logToMainSheet(userId, messageText);
-
       // 通常の処理: getTodaysMessages を呼び出して、今日のメッセージを取得
       var todaysMessages = getTodaysMessages(userId);
       var prompt = "\n1行でかわいくツッコんでください！";
@@ -135,6 +132,9 @@ function doPost(e) {
       var replyMessage =
         geminiMessage + "\n" + todaysMessages.map((msg) => msg).join("\n");
       sendReply(event.replyToken, replyMessage);
+
+      // 現在のつぶやきをスプレッドシートに保存
+      logToMainSheet(userId, messageText, geminiMessage);
 
       return ContentService.createTextOutput(
         JSON.stringify({ result: "success" }),
@@ -436,7 +436,7 @@ function logReplyStatus(status, replyMessage, responseCode, responseText) {
   sheet.appendRow([date, status, replyMessage, responseCode, responseText]);
 }
 
-function logToMainSheet(userId, messageText) {
+function logToMainSheet(userId, messageText, geminiMessage) {
   var sheet = SpreadsheetApp.openById(
     PropertiesService.getScriptProperties().getProperty("SPREADSHEET_ID"),
   ).getSheetByName("おもちログ");
@@ -444,10 +444,10 @@ function logToMainSheet(userId, messageText) {
     sheet = SpreadsheetApp.openById(
       PropertiesService.getScriptProperties().getProperty("SPREADSHEET_ID"),
     ).insertSheet("おもちログ");
-    sheet.appendRow(["日時", "ユーザーID", "本文"]);
+    sheet.appendRow(["日時", "ユーザーID", "本文", "おもちメッセージ"]);
   }
   var date = new Date();
-  sheet.appendRow([date, userId, messageText]);
+  sheet.appendRow([date, userId, messageText, geminiMessage]);
 }
 
 // エラーをスプレッドシートの "error" シートに記録する関数
@@ -640,7 +640,7 @@ function getGeminiMessage(messageText, prompt) {
   }
 
   // APIエンドポイントのURL
-  var apiUrl = "https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key=" + apiKey;
+  var apiUrl = "https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash-preview-05-20:generateContent?key=" + apiKey;
 
   // リクエストボディの設定
   var payload = {
