@@ -716,6 +716,11 @@ function pushToNotionDaily() {
     );
     var msg = row[2];
     var line = "「" + msg + "」" + "(" + ts + ")"; // 時刻とメッセージを結合
+
+    var geminiMsg = row[3];
+    if (geminiMsg) {
+      line += "\n \"( ๑•ᴗ•๑)\"" + geminiMsg; // おもちメッセージを追加
+    }
     (grouped[userName] = grouped[userName] || []).push(line);
   });
 
