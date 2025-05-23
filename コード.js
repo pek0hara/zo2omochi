@@ -127,10 +127,15 @@ function doPost(e) {
 
       // 通常の処理: getTodaysMessages を呼び出して、今日のメッセージを取得
       var todaysMessages = getTodaysMessages(userId);
-      var prompt = "\n1行でかわいくツッコんでください！";
+      var prompt = "\n\nあなたはLINEBOTです。上記の発言に1行でかわいくツッコんでください！";
       var geminiMessage = getGeminiMessage(messageText, prompt);
-      var replyMessage =
-        geminiMessage + "\n" + todaysMessages.map((msg) => msg).join("\n");
+      const replyMessage = [
+        geminiMessage + "\n",
+        ...todaysMessages,
+        `${Utilities.formatDate(new Date(), "Asia/Tokyo", "HH:mm")} ${messageText}`
+      ].join("\n");
+
+      // 返信メッセージを送信
       sendReply(event.replyToken, replyMessage);
 
       // 現在のつぶやきをスプレッドシートに保存
@@ -645,8 +650,8 @@ function getGeminiMessage(messageText, prompt) {
   }
 
   // APIエンドポイントのURL
-  var apiUrl = "https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash-preview-05-20:generateContent?key=" + apiKey;
-
+  var apiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=" + apiKey;
+  
   // リクエストボディの設定
   var payload = {
     contents: [{
@@ -729,23 +734,60 @@ function pushToNotionDaily() {
     (grouped[userName] = grouped[userName] || []).push(line);
   });
 
-  // 本文生成
-  var contentLines = [];
+  // 本文生成 (Geminiのタイトル生成用)
+  var contentLinesForTitle = [];
   Object.keys(grouped).forEach(function (userName) {
-    contentLines.push(userName);
-    contentLines = contentLines.concat(grouped[userName]);
-    contentLines.push(""); // 空行で区切り
+    contentLinesForTitle.push(userName);
+    contentLinesForTitle = contentLinesForTitle.concat(grouped[userName]);
+    contentLinesForTitle.push(""); // 空行で区切り
   });
-  var content = contentLines.join("\n");
+  var contentForTitle = contentLinesForTitle.join("\n");
 
   var notionToken =
     PropertiesService.getScriptProperties().getProperty("NOTION_TOKEN");
   var databaseId =
     PropertiesService.getScriptProperties().getProperty("NOTION_DATABASE_ID");
   // Gemini API から取得したメッセージをタイトルに設定
-  var prompt = "\n20文字以内で今日のパワーワードを１つピックアップして！";
+  var prompt = "\n\nあなたはタイトル命名AIです。20文字以内で今日のパワーワードを１つピックアップして！";
   // 先頭20文字をタイトルにする
-  var title = getGeminiMessage(content, prompt).slice(0, 20);
+  var title = getGeminiMessage(contentForTitle, prompt).slice(0, 20);
+
+  // Notionページ本文のブロックを生成
+  var notionBlocks = [];
+  Object.keys(grouped).forEach(function (userName) {
+    // ユーザー名を見出し3として追加
+    notionBlocks.push({
+      object: "block",
+      type: "heading_3",
+      heading_3: {
+        rich_text: [
+          {
+            type: "text",
+            text: {
+              content: userName,
+            },
+          },
+        ],
+      },
+    });
+    // 発言を段落ブロックとして追加
+    grouped[userName].forEach(function (line) {
+      notionBlocks.push({
+        object: "block",
+        type: "paragraph",
+        paragraph: {
+          rich_text: [
+            {
+              type: "text",
+              text: {
+                content: line,
+              },
+            },
+          ],
+        },
+      });
+    });
+  });
 
   // payload 定義
   const payload = {
@@ -779,18 +821,13 @@ function pushToNotionDaily() {
       },
     },
     children: [
-      // ページの本文
+      ...notionBlocks, // 生成したユーザーごとのブロックを展開
+      // 既存の固定フッターブロック (LINEへのリンク)
       {
         object: "block",
         type: "paragraph",
         paragraph: {
           rich_text: [
-            {
-              type: "text",
-              text: {
-                content: content,
-              },
-            },
             {
               type: "text",
               text: {
