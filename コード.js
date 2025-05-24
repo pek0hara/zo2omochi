@@ -729,7 +729,7 @@ function pushToNotionDaily() {
 
     var geminiMsg = row[3];
     if (geminiMsg) {
-      line += "\n \"( ๑•ᴗ•๑)\"" + geminiMsg; // おもちメッセージを追加
+      line += "\n \"( ๑•ᴗ•๑)\" ＜ " + geminiMsg; // おもちメッセージを追加
     }
     (grouped[userName] = grouped[userName] || []).push(line);
   });
