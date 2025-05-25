@@ -717,29 +717,39 @@ function pushToNotionDaily() {
   var grouped = {};
   recent.forEach(function (row) {
     var userId = row[1];
-    var userName = getDisplayName(userId) || "誰か"; // 名前を取得、なければデフォルト
-    // am/pm 形式の時刻を取得
+    var userName = getDisplayName(userId) || "誰か";
     var ts = Utilities.formatDate(
       new Date(row[0]),
       Session.getScriptTimeZone(),
       "HH:mm",
     );
     var msg = row[2];
-    var line = "「" + msg + "」" + "(" + ts + ")"; // 時刻とメッセージを結合
-
     var geminiMsg = row[3];
+
+    // ユーザーメッセージと「おもちメッセージ」を分けて格納
+    var userMessageContent = "「" + msg + "」" + "(" + ts + ")";
+    var omcchiMessageContent = null;
     if (geminiMsg) {
-      line += "\n \"( ๑•ᴗ•๑)\" ＜ " + geminiMsg; // おもちメッセージを追加
+      omcchiMessageContent = "\"( ๑•ᴗ•๑)\" ＜ " + geminiMsg;
     }
-    (grouped[userName] = grouped[userName] || []).push(line);
+
+    (grouped[userName] = grouped[userName] || []).push({
+      user: userMessageContent,
+      omochi: omcchiMessageContent,
+    });
   });
 
   // 本文生成 (Geminiのタイトル生成用)
   var contentLinesForTitle = [];
   Object.keys(grouped).forEach(function (userName) {
     contentLinesForTitle.push(userName);
-    contentLinesForTitle = contentLinesForTitle.concat(grouped[userName]);
-    contentLinesForTitle.push(""); // 空行で区切り
+    grouped[userName].forEach(function(entry) {
+      contentLinesForTitle.push(entry.user);
+      if (entry.omochi) {
+        contentLinesForTitle.push(entry.omochi);
+      }
+    });
+    contentLinesForTitle.push("");
   });
   var contentForTitle = contentLinesForTitle.join("\n");
 
@@ -747,15 +757,12 @@ function pushToNotionDaily() {
     PropertiesService.getScriptProperties().getProperty("NOTION_TOKEN");
   var databaseId =
     PropertiesService.getScriptProperties().getProperty("NOTION_DATABASE_ID");
-  // Gemini API から取得したメッセージをタイトルに設定
-  var prompt = "\n\nあなたはタイトル命名AIです。20文字以内で今日のパワーワードを１つピックアップして！";
-  // 先頭20文字をタイトルにする
+  var prompt = "\n\nあなたはタイトル命名AIです。20文字以内で今日のパワーワードを１つピックアップして！(タイトルだけを返却して)";
   var title = getGeminiMessage(contentForTitle, prompt).slice(0, 20);
 
   // Notionページ本文のブロックを生成
   var notionBlocks = [];
   Object.keys(grouped).forEach(function (userName) {
-    // ユーザー名を見出し3として追加
     notionBlocks.push({
       object: "block",
       type: "heading_3",
@@ -770,22 +777,26 @@ function pushToNotionDaily() {
         ],
       },
     });
-    // 発言を段落ブロックとして追加
-    grouped[userName].forEach(function (line) {
+
+    grouped[userName].forEach(function (entry) {
+      // ユーザーメッセージを段落ブロックとして追加
       notionBlocks.push({
         object: "block",
         type: "paragraph",
         paragraph: {
-          rich_text: [
-            {
-              type: "text",
-              text: {
-                content: line,
-              },
-            },
-          ],
+          rich_text: [{ type: "text", text: { content: entry.user } }],
         },
       });
+
+      if (entry.omochi) {
+        notionBlocks.push({
+          object: "block",
+          type: "paragraph",
+          paragraph: {
+            rich_text: [{ type: "text", text: { content: "    " + entry.omochi } }],
+          },
+        });
+      }
     });
   });
 
