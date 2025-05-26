@@ -854,13 +854,271 @@ function pushToNotionDaily() {
 
   Logger.log("Notion Database ID: " + databaseId);
   var url = "https://api.notion.com/v1/pages";
+  var notionResponse = sendRequestToNotion(url, "post", payload);
+
+  Logger.log("pushToNotionDaily response code: " + notionResponse.code);
+  Logger.log("pushToNotionDaily response body: " + notionResponse.body);
+  if (notionResponse.code !== 200) {
+    logErrorToSheet("Notion API Error pushToNotionDaily", "Code: " + notionResponse.code + ", Body: " + notionResponse.body);
+    throw new Error("Notion API Error " + notionResponse.code + ": " + notionResponse.body);
+  }
+}
+
+// --- ここから月次Notion連携処理 ---
+
+// 実行日基準で「前月」の年月 (YYYY-MM形式) を返す関数
+function getProcessedMonth() {
+  var now = new Date();
+  now.setDate(0); // 前月の末日に設定
+  return Utilities.formatDate(now, Session.getScriptTimeZone(), "yyyy-MM");
+}
+
+// 年月を元に ScriptProperties で使用するキー名 (MONTHLY_EXPORT_STATUS_YYYY-MM) を生成する関数
+function getMonthlyStatusKey(yyyymm) {
+  return "MONTHLY_EXPORT_STATUS_" + yyyymm;
+}
+
+// 現在処理中のキーより古い月次ステータスキーを ScriptProperties から削除する関数
+function deleteOldMonthlyStatusKeys(currentProcessingMonthKey) {
+  var properties = PropertiesService.getScriptProperties();
+  var allKeys = properties.getKeys();
+  var currentPrefix = "MONTHLY_EXPORT_STATUS_";
+  var currentSuffix = currentProcessingMonthKey.replace(currentPrefix, "");
+
+  allKeys.forEach(function(key) {
+    if (key.startsWith(currentPrefix)) {
+      var keySuffix = key.replace(currentPrefix, "");
+      if (keySuffix < currentSuffix) {
+        properties.deleteProperty(key);
+        Logger.log("Deleted old status key: " + key);
+      }
+    }
+  });
+}
+
+// 前月のコメントをNotionにプッシュするメイン関数（実行ごとに1ユーザー）
+function pushToNotionMonthly() {
+  try {
+    var processedMonthStr = getProcessedMonth(); // "YYYY-MM"
+    var monthlyStatusKey = getMonthlyStatusKey(processedMonthStr);
+
+    deleteOldMonthlyStatusKeys(monthlyStatusKey);
+
+    var properties = PropertiesService.getScriptProperties();
+    var monthlyStatusJSON = properties.getProperty(monthlyStatusKey);
+    var monthlyStatus = monthlyStatusJSON ? JSON.parse(monthlyStatusJSON) : {};
+
+    var scriptTimeZone = Session.getScriptTimeZone();
+
+    // ステータスが初期化されていない場合（その月の初回処理時など）
+    if (Object.keys(monthlyStatus).length === 0) {
+      var sheet = SpreadsheetApp.openById(
+        properties.getProperty("SPREADSHEET_ID")
+      ).getSheetByName("おもちログ");
+      if (!sheet) {
+        Logger.log("おもちログシートが見つかりません。");
+        return;
+      }
+      var data = sheet.getDataRange().getValues();
+      var usersInMonth = {};
+
+      // 前月の1日と末日を計算
+      var firstDayOfProcessedMonth = new Date(processedMonthStr + "-01T00:00:00");
+      var tempDate = new Date(firstDayOfProcessedMonth);
+      tempDate.setMonth(tempDate.getMonth() + 1);
+      tempDate.setDate(0); // 前月の末日
+      var lastDayOfProcessedMonth = new Date(tempDate.getFullYear(), tempDate.getMonth(), tempDate.getDate(), 23, 59, 59);
+
+
+      for (var i = 1; i < data.length; i++) { // ヘッダー行をスキップ
+        var timestamp = new Date(data[i][0]);
+        if (timestamp >= firstDayOfProcessedMonth && timestamp <= lastDayOfProcessedMonth) {
+          var userId = data[i][1];
+          if (userId) {
+            usersInMonth[userId] = false; // 未処理としてマーク
+          }
+        }
+      }
+      if (Object.keys(usersInMonth).length === 0) {
+        Logger.log(processedMonthStr + "に発言のあったユーザーはいませんでした。");
+        properties.setProperty(monthlyStatusKey, JSON.stringify({})); // 空のステータスを保存して終了
+        return;
+      }
+      monthlyStatus = usersInMonth;
+      properties.setProperty(monthlyStatusKey, JSON.stringify(monthlyStatus));
+      Logger.log(processedMonthStr + "の月次処理ステータスを初期化しました: " + JSON.stringify(monthlyStatus));
+    }
+
+    var unprocessedUserId = null;
+    for (var userIdKey in monthlyStatus) {
+      if (monthlyStatus.hasOwnProperty(userIdKey) && !monthlyStatus[userIdKey]) {
+        unprocessedUserId = userIdKey;
+        break;
+      }
+    }
+
+    if (!unprocessedUserId) {
+      Logger.log(processedMonthStr + "の全ユーザーの月次Notion連携は完了しています。");
+      return;
+    }
+
+    Logger.log(processedMonthStr + "の未処理ユーザーを発見: " + unprocessedUserId + ". Notionページ作成を開始します。");
+
+    // ユーザーのコメントを取得
+    var userComments = [];
+    var sheet = SpreadsheetApp.openById(
+      properties.getProperty("SPREADSHEET_ID")
+    ).getSheetByName("おもちログ");
+    var data = sheet.getDataRange().getValues();
+    
+    var firstDayOfProcessedMonth = new Date(processedMonthStr + "-01T00:00:00");
+    var tempDate = new Date(firstDayOfProcessedMonth);
+    tempDate.setMonth(tempDate.getMonth() + 1);
+    tempDate.setDate(0); 
+    var lastDayOfProcessedMonth = new Date(tempDate.getFullYear(), tempDate.getMonth(), tempDate.getDate(), 23, 59, 59);
+
+
+    for (var i = 1; i < data.length; i++) {
+      var timestamp = new Date(data[i][0]);
+      var msgUserId = data[i][1];
+      var message = data[i][2];
+      // var geminiMsg = data[i][3]; // 今回はGeminiメッセージは含めない
+
+      if (msgUserId === unprocessedUserId && timestamp >= firstDayOfProcessedMonth && timestamp <= lastDayOfProcessedMonth) {
+        userComments.push({
+          timestamp: Utilities.formatDate(timestamp, scriptTimeZone, "yyyy/MM/dd HH:mm:ss"),
+          message: message
+        });
+      }
+    }
+
+    if (userComments.length === 0) {
+      Logger.log("ユーザー " + unprocessedUserId + " の " + processedMonthStr + " のコメントは見つかりませんでした。ステータスを更新します。");
+      monthlyStatus[unprocessedUserId] = true;
+      properties.setProperty(monthlyStatusKey, JSON.stringify(monthlyStatus));
+      return;
+    }
+    
+    // コメントを時系列順にソート (getValuesは基本的に時系列だが念のため)
+    userComments.sort(function(a,b){
+      return new Date(a.timestamp) - new Date(b.timestamp);
+    });
+
+
+    var userName = getDisplayName(unprocessedUserId) || "名前未設定ユーザー (" + unprocessedUserId.substring(0,8) + ")";
+    var notionPageTitle = userName + "さんの" + processedMonthStr.replace("-","年") + "月のおきもち";
+
+    var notionBlocks = [];
+
+    // コメントを日付ごとにグループ化
+    var commentsByDate = {};
+    userComments.forEach(function(comment) {
+      var dateStr = comment.timestamp.substring(0, 10); // "yyyy/MM/dd"
+      if (!commentsByDate[dateStr]) {
+        commentsByDate[dateStr] = [];
+      }
+      // コメントに時刻(HH:mm)を追加
+      commentsByDate[dateStr].push(comment.message + "(" + comment.timestamp.substring(11,16) + ")");
+    });
+
+    // 日付ごとにブロックを生成し、notionBlocksに追加
+    var sortedDates = Object.keys(commentsByDate).sort();
+
+    for (var k = 0; k < sortedDates.length; k++) {
+      var date = sortedDates[k];
+      notionBlocks.push({
+        object: "block",
+        type: "heading_3",
+        heading_3: {
+          rich_text: [{ type: "text", text: { content: date } }]
+        }
+      });
+
+      var messagesForDate = commentsByDate[date];
+      for (var l = 0; l < messagesForDate.length; l++) {
+        notionBlocks.push({
+          object: "block",
+          type: "paragraph",
+          paragraph: {
+            rich_text: [{ type: "text", text: { content: messagesForDate[l] } }]
+          }
+        });
+      }
+    }
+    
+    notionBlocks.push({ // フッターにLINEへのリンクを追加
+        object: "block",
+        type: "paragraph",
+        paragraph: {
+          rich_text: [
+            {
+              type: "text",
+              text: {
+                content: "https://line.me/R/ti/p/@838dxysu", // 実際のLINE BotのIDに合わせてください
+                link: { url: "https://line.me/R/ti/p/@838dxysu" },
+              },
+            },
+          ],
+        },
+      });
+
+    var notionDatabaseId = properties.getProperty("NOTION_DATABASE_ID");
+    if (!notionDatabaseId) {
+        Logger.log("NOTION_DATABASE_ID が設定されていません。");
+        logErrorToSheet("Notion Config Error", "NOTION_DATABASE_ID is not set for pushToNotionMonthly");
+        return;
+    }
+
+    const payload = {
+      parent: { database_id: notionDatabaseId },
+      properties: {
+        title: { // データベースのタイトルプロパティ名
+          title: [{ text: { content: notionPageTitle } }]
+        },
+        ラベル: { // データベースのセレクトプロパティ名
+          select: { name: "ひと月のおきもち" } // 新しいラベル
+        },
+        URL: { url: null },
+        "Liked User": { people: [] },
+        作成者メモ: { rich_text: [{ text: { content: processedMonthStr + " の " + userName + " のレポート" } }] },
+      },
+      children: notionBlocks
+    };
+    
+    Logger.log("Notion API Payload for " + unprocessedUserId + ": " + JSON.stringify(payload).substring(0,500) + "...");
+
+
+    var notionApiUrl = "https://api.notion.com/v1/pages";
+    var notionResponse = sendRequestToNotion(notionApiUrl, "post", payload);
+
+    if (notionResponse.code === 200) {
+      Logger.log("Notionページを正常に作成しました for user: " + unprocessedUserId + ", month: " + processedMonthStr + ". Title: " + notionPageTitle);
+      monthlyStatus[unprocessedUserId] = true;
+      properties.setProperty(monthlyStatusKey, JSON.stringify(monthlyStatus));
+    } else {
+      Logger.log("Notionページの作成に失敗しました for user: " + unprocessedUserId + ", month: " + processedMonthStr + ". Code: " + notionResponse.code + ", Body: " + notionResponse.body);
+      logErrorToSheet("Notion API Error pushToNotionMonthly", "User: " + unprocessedUserId + ", Month: " + processedMonthStr + ", Code: " + notionResponse.code + ", Body: " + notionResponse.body);
+      // 失敗した場合でも、リトライを防ぐために一旦完了扱いにするか、エラーハンドリングを別途検討
+      // ここでは、失敗した場合は次回再実行されるようにステータスは変更しない。
+    }
+
+  } catch (error) {
+    Logger.log("Error in pushToNotionMonthly: " + error.message + (error.stack ? "\n" + error.stack : ""));
+    logErrorToSheet("pushToNotionMonthly Exception", error.message + (error.stack ? "\n" + error.stack : ""));
+  }
+}
+
+// Notion APIにリクエストを送信する共通関数
+function sendRequestToNotion(url, method, payload) {
+  var notionToken =
+    PropertiesService.getScriptProperties().getProperty("NOTION_TOKEN");
   var headers = {
     Authorization: "Bearer " + notionToken,
     "Notion-Version": "2022-06-28",
     "Content-Type": "application/json",
   };
   var options = {
-    method: "post",
+    method: method,
     headers: headers,
     payload: JSON.stringify(payload),
     muteHttpExceptions: true,
@@ -869,9 +1127,9 @@ function pushToNotionDaily() {
   var response = UrlFetchApp.fetch(url, options);
   var code = response.getResponseCode();
   var body = response.getContentText();
-  Logger.log("pushToNotionDaily response code: " + code);
-  Logger.log("pushToNotionDaily response body: " + body);
-  if (code !== 200) {
-    throw new Error("Notion API Error " + code);
-  }
+
+  return {
+    code: code,
+    body: body,
+  };
 }
