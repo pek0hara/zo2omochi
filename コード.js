@@ -3,6 +3,7 @@ function doPost(e) {
     var contents = JSON.parse(e.postData.contents);
     var event = contents.events[0];
     var userId = event.source.userId;
+    var botUserId = PropertiesService.getScriptProperties().getProperty("BOT_USER_ID"); // BotのユーザーIDを取得
 
     // postbackの「はい」を受け取ったときの処理
     if (
@@ -42,108 +43,167 @@ function doPost(e) {
 
     if (
       event.type === "message" &&
-      event.message.type === "text" &&
-      event.source.type === "user"
+      event.message.type === "text"
     ) {
-      var messageText = event.message.text;
-      var userName = getDisplayName(userId);
-
-      if (messageText.startsWith("/welcome")) {
-        sendWelcomeMessage(event.replyToken);
-        return ContentService.createTextOutput(
-          JSON.stringify({ result: "success" }),
-        ).setMimeType(ContentService.MimeType.JSON);
-      }
-
-      // 名前が未設定の場合
-      if (!userName || userName === "") {
-        // 名前の確認を促すメッセージを送信
-        sendReply(event.replyToken, "あなたの名前を教えて！");
-        // 名前に「誰か」を設定
-        setUserName(userId, "誰か");
-
-        return ContentService.createTextOutput(
-          JSON.stringify({ result: "success" }),
-        ).setMimeType(ContentService.MimeType.JSON);
-      }
-
-      // 名前が未設定の場合
-      if (userName === "誰か") {
-        // ユーザーが入力したテキストを名前候補とする
-        var proposedName = messageText.trim();
-        if (proposedName && proposedName.length > 0) {
-          // 空文字でないことを確認
-          // 名前確認メッセージを送信
-          askForNameConfirmation(event.replyToken, proposedName);
-        } else {
-          // 名前として無効な入力の場合、再度入力を促す
-          sendReply(event.replyToken, "あなたの名前を教えてください。");
+      var isMentionedToBot = false;
+      if (event.source.type === "group") {
+        isMentionedToBot = event.message.mention &&
+                           event.message.mention.mentionees &&
+                           event.message.mention.mentionees.some(m => m.userId === botUserId);
+        if (!isMentionedToBot) {
+          // Botへのメンションがないグループメッセージは無視
+          return ContentService.createTextOutput(
+            JSON.stringify({ result: "success", message: "Not mentioned to bot" })
+          ).setMimeType(ContentService.MimeType.JSON);
         }
-        return ContentService.createTextOutput(
-          JSON.stringify({ result: "success" }),
-        ).setMimeType(ContentService.MimeType.JSON);
       }
 
-      // 名前を設定するコマンド
-      if (messageText.startsWith("/setname ")) {
-        var newName = messageText.replace("/setname ", "").trim();
-        if (newName) {
-          setUserName(userId, newName);
-          sendReply(
-            event.replyToken,
-            "名前を「" + newName + "」に設定したよ！",
-          );
-        } else {
-          sendReply(
-            event.replyToken,
-            "名前を設定できませんでした。正しい形式で入力してください。",
-          );
+      // ユーザーからのメッセージ、またはグループでBotにメンションがあった場合のみ処理を続行
+      if (event.source.type === "user" || (event.source.type === "group" && isMentionedToBot)) {
+        var messageText = event.message.text;
+        // グループチャットの場合、メンション部分をメッセージテキストから削除する
+        if (event.source.type === "group" && botUserId) {
+            if (event.message.mention && event.message.mention.mentionees && event.message.mention.mentionees.length > 0) {
+                let textParts = [];
+                let lastIndex = 0;
+                // メンション情報をindexでソート
+                const sortedMentions = event.message.mention.mentionees.slice().sort((a, b) => a.index - b.index);
+
+                sortedMentions.forEach(mention => {
+                    if (mention.userId === botUserId) {
+                        // Botへのメンションの前の部分を追加
+                        if (mention.index > lastIndex) {
+                            textParts.push(event.message.text.substring(lastIndex, mention.index));
+                        }
+                        // メンション部分をスキップしてlastIndexを更新
+                        lastIndex = mention.index + mention.length;
+                    }
+                });
+                // 最後のメンションの後の部分を追加
+                if (lastIndex < event.message.text.length) {
+                    textParts.push(event.message.text.substring(lastIndex));
+                }
+                
+                // Botへのメンションが一つでもあった場合、textPartsを結合してmessageTextとする
+                // Botへのメンションが全く無かった場合は、元のmessageTextをそのまま使う (isMentionedToBotの条件があるので基本的にはBotメンションはあるはずだが念のため)
+                if (event.message.mention.mentionees.some(m => m.userId === botUserId)) {
+                    messageText = textParts.join('').trim();
+                } else {
+                    // このケースは isMentionedToBot が true であれば通常発生しないはず
+                    // isMentionedToBot のロジックが mentionees の userId のみを見ているため、
+                    // text プロパティに @ユーザー名 があっても mentionees が空の場合 isMentionedToBot は false になる。
+                    // よって、ここに来る場合は botUserId を含む mention が存在しているはず。
+                    messageText = event.message.text.trim(); // フォールバックとして元のテキスト（からBot名を手動で消す必要があるかもしれない）
+                }
+
+                // もし上記の処理でmessageTextが空になった場合（例：メンションのみのメッセージ）、
+                // それでも記録や返信処理は続行される。
+            }
         }
+
+
+        var userName = getDisplayName(userId); // メッセージ送信者のuserIdを使用
+
+        if (messageText.startsWith("/welcome")) {
+          sendWelcomeMessage(event.replyToken);
+          return ContentService.createTextOutput(
+            JSON.stringify({ result: "success" }),
+          ).setMimeType(ContentService.MimeType.JSON);
+        }
+
+        // 名前が未設定の場合
+        if (!userName || userName === "") {
+          // 名前の確認を促すメッセージを送信
+          sendReply(event.replyToken, "あなたの名前を教えて！");
+          // 名前に「誰か」を設定
+          setUserName(userId, "誰か");
+
+          return ContentService.createTextOutput(
+            JSON.stringify({ result: "success" }),
+          ).setMimeType(ContentService.MimeType.JSON);
+        }
+
+        // 名前が未設定の場合
+        if (userName === "誰か") {
+          // ユーザーが入力したテキストを名前候補とする
+          var proposedName = messageText.trim();
+          if (proposedName && proposedName.length > 0) {
+            // 空文字でないことを確認
+            // 名前確認メッセージを送信
+            askForNameConfirmation(event.replyToken, proposedName);
+          } else {
+            // 名前として無効な入力の場合、再度入力を促す
+            sendReply(event.replyToken, "あなたの名前を教えてください。");
+          }
+          return ContentService.createTextOutput(
+            JSON.stringify({ result: "success" }),
+          ).setMimeType(ContentService.MimeType.JSON);
+        }
+
+        // 名前を設定するコマンド
+        if (messageText.startsWith("/setname ")) {
+          var newName = messageText.replace("/setname ", "").trim();
+          if (newName) {
+            setUserName(userId, newName);
+            sendReply(
+              event.replyToken,
+              "名前を「" + newName + "」に設定したよ！",
+            );
+          } else {
+            sendReply(
+              event.replyToken,
+              "名前を設定できませんでした。正しい形式で入力してください。",
+            );
+          }
+          return ContentService.createTextOutput(
+            JSON.stringify({ result: "success" }),
+          ).setMimeType(ContentService.MimeType.JSON);
+        }
+
+        // 削除コマンド
+        if (messageText.startsWith("/delete")) {
+          handleDeleteCommand(userId, messageText, event.replyToken);
+          return ContentService.createTextOutput(
+            JSON.stringify({ result: "success" }),
+          ).setMimeType(ContentService.MimeType.JSON);
+        }
+
+        // 使い方ガイド表示: 「使い方」または「つかいかた」から始まるメッセージ
+        if (
+          messageText.startsWith("使い方") ||
+          messageText.startsWith("つかいかた") ||
+          messageText === "ヘルプ" ||
+          messageText === "へるぷ"
+        ) {
+          sendUsageGuide(event.replyToken, userName);
+          return ContentService.createTextOutput(
+            JSON.stringify({ result: "success" }),
+          ).setMimeType(ContentService.MimeType.JSON);
+        }
+
+        // 通常の処理: getTodaysMessages を呼び出して、今日のメッセージを取得
+        var todaysMessages = [];
+        if (event.source.type === "user") {
+          todaysMessages = getTodaysMessages(userId);
+        }
+        var prompt = "\n\nあなたはLINEBOTです。上記の発言に1行でかわいくツッコんでください！";
+        var geminiMessage = getGeminiMessage(messageText, prompt);
+        const replyMessage = [
+          geminiMessage + "\n",
+          ...todaysMessages,
+          `${Utilities.formatDate(new Date(), "Asia/Tokyo", "HH:mm")} ${messageText}`
+        ].join("\n");
+
+        // 返信メッセージを送信
+        sendReply(event.replyToken, replyMessage);
+
+        // 現在のつぶやきをスプレッドシートに保存
+        logToMainSheet(userId, messageText, geminiMessage);
+
         return ContentService.createTextOutput(
           JSON.stringify({ result: "success" }),
         ).setMimeType(ContentService.MimeType.JSON);
       }
-
-      // 削除コマンド
-      if (messageText.startsWith("/delete")) {
-        handleDeleteCommand(userId, messageText, event.replyToken);
-        return ContentService.createTextOutput(
-          JSON.stringify({ result: "success" }),
-        ).setMimeType(ContentService.MimeType.JSON);
-      }
-
-      // 使い方ガイド表示: 「使い方」または「つかいかた」から始まるメッセージ
-      if (
-        messageText.startsWith("使い方") ||
-        messageText.startsWith("つかいかた") ||
-        messageText === "ヘルプ" ||
-        messageText === "へるぷ"
-      ) {
-        sendUsageGuide(event.replyToken, userName);
-        return ContentService.createTextOutput(
-          JSON.stringify({ result: "success" }),
-        ).setMimeType(ContentService.MimeType.JSON);
-      }
-
-      // 通常の処理: getTodaysMessages を呼び出して、今日のメッセージを取得
-      var todaysMessages = getTodaysMessages(userId);
-      var prompt = "\n\nあなたはLINEBOTです。上記の発言に1行でかわいくツッコんでください！";
-      var geminiMessage = getGeminiMessage(messageText, prompt);
-      const replyMessage = [
-        geminiMessage + "\n",
-        ...todaysMessages,
-        `${Utilities.formatDate(new Date(), "Asia/Tokyo", "HH:mm")} ${messageText}`
-      ].join("\n");
-
-      // 返信メッセージを送信
-      sendReply(event.replyToken, replyMessage);
-
-      // 現在のつぶやきをスプレッドシートに保存
-      logToMainSheet(userId, messageText, geminiMessage);
-
-      return ContentService.createTextOutput(
-        JSON.stringify({ result: "success" }),
-      ).setMimeType(ContentService.MimeType.JSON);
     }
   } catch (error) {
     Logger.log("Error in doPost: " + error.message);
@@ -317,57 +377,6 @@ function sendWelcomeMessage(replyToken) {
   }
 }
 
-// 他のユーザーの最新のつぶやきを取得する関数
-function getLatestMessageFromOthers(currentUserId) {
-  var sheet = SpreadsheetApp.openById(
-    PropertiesService.getScriptProperties().getProperty("SPREADSHEET_ID"),
-  ).getSheetByName("おもちログ");
-  if (!sheet) return null;
-
-  var data = sheet.getDataRange().getValues();
-  for (var i = data.length - 1; i > 0; i--) {
-    // 最新の行から検索
-    var userId = data[i][1]; // ユーザーID列
-    var message = data[i][2]; // メッセージ列
-    if (userId !== currentUserId) {
-      return message; // 自分以外のつぶやきを返す
-    }
-  }
-  return null; // 他のユーザーのつぶやきがない場合
-}
-
-// 直近のつぶやきを取得する関数
-function getRecentMessages(userId) {
-  var sheet = SpreadsheetApp.openById(
-    PropertiesService.getScriptProperties().getProperty("SPREADSHEET_ID"),
-  ).getSheetByName("おもちログ");
-  if (!sheet) return [];
-
-  var data = sheet.getDataRange().getValues();
-  var today = new Date();
-  today.setHours(0, 0, 0, 0); // 今日の日付の0時0分0秒を設定
-
-  var todaysMessages = [];
-  for (var i = data.length - 1; i > 0; i--) {
-    // 最新の行から取得
-    var timestamp = new Date(data[i][0]); // 日時列
-    var messageUserId = data[i][1]; // ユーザーID列
-    var message = data[i][2]; // メッセージ列
-
-    // 自分の書き込みかつ今日の日付のものを取得
-    if (messageUserId === userId && timestamp >= today) {
-      var time = Utilities.formatDate(
-        timestamp,
-        Session.getScriptTimeZone(),
-        "HH:mm",
-      );
-      todaysMessages.push(time + " " + message); // 時刻とメッセージを結合
-    }
-  }
-
-  return todaysMessages.reverse(); // 配列を逆順にして返す
-}
-
 // ユーザーIDと名前を紐づける
 function getDisplayName(userId) {
   var userMap = PropertiesService.getScriptProperties().getProperty("USER_MAP");
@@ -421,26 +430,6 @@ function sendReply(replyToken, replyMessage) {
   }
 }
 
-// リプライの成功/失敗をスプレッドシートに記録する関数
-function logReplyStatus(status, replyMessage, responseCode, responseText) {
-  var spreadsheet = SpreadsheetApp.openById(
-    PropertiesService.getScriptProperties().getProperty("SPREADSHEET_ID"),
-  );
-  var sheet = spreadsheet.getSheetByName("reply_log");
-  if (!sheet) {
-    sheet = spreadsheet.insertSheet("reply_log");
-    sheet.appendRow([
-      "日時",
-      "ステータス",
-      "返信メッセージ",
-      "レスポンスコード",
-      "レスポンス内容",
-    ]);
-  }
-  var date = new Date();
-  sheet.appendRow([date, status, replyMessage, responseCode, responseText]);
-}
-
 function logToMainSheet(userId, messageText, geminiMessage) {
   var sheet = SpreadsheetApp.openById(
     PropertiesService.getScriptProperties().getProperty("SPREADSHEET_ID"),
@@ -467,6 +456,20 @@ function logErrorToSheet(errorMessage, stackTrace) {
   }
   var date = new Date();
   sheet.appendRow([date, errorMessage, stackTrace]);
+}
+
+// エラーをスプレッドシートの "debug" シートに記録する関数
+function logDebugToSheet(debugLog) {
+  var spreadsheet = SpreadsheetApp.openById(
+    PropertiesService.getScriptProperties().getProperty("SPREADSHEET_ID"),
+  );
+  var sheet = spreadsheet.getSheetByName("debug");
+  if (!sheet) {
+    sheet = spreadsheet.insertSheet("debug");
+    sheet.appendRow(["日時", "デバッグログ"]);
+  }
+  var date = new Date();
+  sheet.appendRow([date, debugLog]);
 }
 
 function setUserName(userId, newName) {
