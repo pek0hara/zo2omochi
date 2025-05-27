@@ -2,6 +2,25 @@ function doPost(e) {
   try {
     var contents = JSON.parse(e.postData.contents);
     var event = contents.events[0];
+
+    // 再配信イベントのチェック
+    if (event.deliveryContext && event.deliveryContext.isRedelivery) {
+      logErrorToSheet(
+        "再配信イベントを受信しました。 WebhookEventID: " +
+          (event.webhookEventId || "N/A") + // WebhookEventIdがあればログに出力
+          ", UserID: " +
+          (event.source ? event.source.userId : "N/A") +
+          "。重複処理を避けるためスキップします。"
+      );
+      // LINEに即座に応答を返し、さらなる再試行を防ぎます。
+      return ContentService.createTextOutput(
+        JSON.stringify({
+          result: "success",
+          message: "再配信イベントを受信し、スキップしました。",
+        })
+      ).setMimeType(ContentService.MimeType.JSON);
+    }
+
     var userId = event.source.userId;
     var botUserId = PropertiesService.getScriptProperties().getProperty("BOT_USER_ID"); // BotのユーザーIDを取得
 
