@@ -1,0 +1,93 @@
+name: Notion Button Trigger with Dynamic Gemini Prompt
+
+on:
+  repository_dispatch:
+    types: [notion_button_trigger_with_text] # トリガータイプをより具体的に変更
+
+jobs:
+  generate_and_post_comment:
+    runs-on: ubuntu-latest
+    steps:
+      - name: jq をインストール
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: 受信した本文（プロンプト）を確認
+        id: get_prompt
+        run: |
+          echo "Received client_payload: ${{ toJSON(github.event.client_payload) }}"
+          PROMPT_FROM_NOTION="${{ github.event.client_payload.page_content }}" # client_payload.page_content に本文が格納されていると仮定
+          if [ -z "$PROMPT_FROM_NOTION" ]; then
+            echo "エラー: Notionからの本文がclient_payloadに含まれていません。"
+            echo "デフォルトのプロンプトを使用します。"
+            PROMPT_FROM_NOTION="Notionの本文が取得できませんでした。何か面白いことを教えてください。"
+          fi
+          echo "使用するプロンプト: $PROMPT_FROM_NOTION"
+          echo "prompt_text=$PROMPT_FROM_NOTION" >> "$GITHUB_OUTPUT"
+
+      - name: Gemini API を呼び出し
+        id: gemini_call
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_PROMPT_TEXT: ${{ steps.get_prompt.outputs.prompt_text }}
+        run: |
+          echo "Geminiへのプロンプト: $GEMINI_PROMPT_TEXT"
+
+          # Gemini API用のペイロードを構築
+          JSON_PAYLOAD=$(printf '{
+            "contents": [{
+              "role": "user",
+              "parts": [{
+                "text": "%s"
+              }]
+            }]
+          }' "$GEMINI_PROMPT_TEXT")
+
+          # Gemini APIを呼び出し
+          API_RESPONSE=$(curl -s -X POST \
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-preview-05-20:generateContent?key=$GEMINI_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$JSON_PAYLOAD")
+
+          echo "Gemini API Raw Response: $API_RESPONSE"
+
+          GENERATED_TEXT=$(echo "$API_RESPONSE" | jq -r '.candidates[0].content.parts[0].text // empty')
+
+          if [ -z "$GENERATED_TEXT" ] || [ "$GENERATED_TEXT" == "null" ] ; then
+            echo "エラー: Gemini応答からテキストを抽出できませんでした、または応答が空でした。"
+            GENERATED_TEXT="Gemini経由でコメントを生成できませんでした。これはデフォルトメッセージです。"
+          fi
+          
+          echo "生成されたテキスト (raw): $GENERATED_TEXT"
+          GENERATED_TEXT_ESCAPED=$(echo "$GENERATED_TEXT" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')
+          echo "gemini_comment=$GENERATED_TEXT_ESCAPED" >> "$GITHUB_OUTPUT"
+
+      - name: Notion API を呼び出してコメント
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_PAGE_ID: ${{ github.event.client_payload.notion_page_id || secrets.NOTION_PAGE_ID }} # client_payload からページIDも受け取れるようにする (オプション)
+          COMMENT_FROM_GEMINI: ${{ steps.gemini_call.outputs.gemini_comment }}
+        run: |
+          TARGET_NOTION_PAGE_ID="$NOTION_PAGE_ID"
+          if [ -z "$TARGET_NOTION_PAGE_ID" ]; then
+             echo "エラー: NotionページIDが指定されていません。"
+             exit 1
+          fi
+
+          if [ -z "$COMMENT_FROM_GEMINI" ]; then
+            COMMENT_TEXT_FINAL="デフォルトコメント: An issue occurred retrieving the Gemini response for Notion."
+          else
+            COMMENT_TEXT_FINAL="$COMMENT_FROM_GEMINI"
+          fi
+
+          echo "Notionへの最終コメント: $COMMENT_TEXT_FINAL (対象ページID: $TARGET_NOTION_PAGE_ID)"
+
+          NOTION_JSON_PAYLOAD=$(printf '{
+            "parent": { "page_id": "%s" },
+            "rich_text": [{ "text": { "content": "%s" } }]
+          }' "$TARGET_NOTION_PAGE_ID" "$COMMENT_TEXT_FINAL")
+
+          curl -X POST "https://api.notion.com/v1/comments" \
+            -H "Authorization: Bearer $NOTION_TOKEN" \
+            -H "Content-Type: application/json" \
+            -H "Notion-Version: 2022-06-28" \
+            -d "$NOTION_JSON_PAYLOAD"
