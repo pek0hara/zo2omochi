@@ -3,6 +3,21 @@ function doPost(e) {
     var contents = JSON.parse(e.postData.contents);
     var event = contents.events[0];
 
+    // webhookEventIdによる重複チェック（最も確実な方法）
+    if (event.webhookEventId) {
+      if (isDuplicateEvent(event.webhookEventId)) {
+        Logger.log("Duplicate webhookEventId detected: " + event.webhookEventId);
+        return ContentService.createTextOutput(
+          JSON.stringify({
+            result: "success",
+            message: "Duplicate event skipped",
+          })
+        ).setMimeType(ContentService.MimeType.JSON);
+      }
+      // 処理したイベントIDを記録
+      recordProcessedEvent(event.webhookEventId);
+    }
+
     // 再配信イベントのチェック
     if (event.deliveryContext && event.deliveryContext.isRedelivery) {
       logErrorToSheet(
@@ -1155,3 +1170,55 @@ function sendRequestToNotion(url, method, payload) {
     body: body,
   };
 }
+
+// 処理済みイベントの重複チェック機能
+function isDuplicateEvent(webhookEventId) {
+  var sheet = getProcessedEventsSheet();
+  var data = sheet.getDataRange().getValues();
+  
+  // 過去24時間以内の処理済みイベントをチェック
+  var yesterday = new Date();
+  yesterday.setHours(yesterday.getHours() - 24);
+  
+  for (var i = 1; i < data.length; i++) { // ヘッダー行をスキップ
+    if (data[i][1] === webhookEventId && data[i][0] > yesterday) {
+      return true; // 重複発見
+    }
+  }
+  return false;
+}
+
+function recordProcessedEvent(webhookEventId) {
+  var sheet = getProcessedEventsSheet();
+  sheet.appendRow([new Date(), webhookEventId]);
+  
+  // 古いレコードを削除（24時間以前のものを削除）
+  cleanupOldEvents(sheet);
+}
+
+function getProcessedEventsSheet() {
+  var spreadsheet = SpreadsheetApp.openById(
+    PropertiesService.getScriptProperties().getProperty("SPREADSHEET_ID")
+  );
+  var sheet = spreadsheet.getSheetByName("processed_events");
+  if (!sheet) {
+    sheet = spreadsheet.insertSheet("processed_events");
+    sheet.appendRow(["処理時刻", "WebhookEventId"]);
+  }
+  return sheet;
+}
+
+function cleanupOldEvents(sheet) {
+  var data = sheet.getDataRange().getValues();
+  var yesterday = new Date();
+  yesterday.setHours(yesterday.getHours() - 24);
+  
+  // 古いデータを削除（下から上へ削除して行番号のずれを防ぐ）
+  for (var i = data.length - 1; i > 0; i--) { // ヘッダー行は残す
+    if (data[i][0] < yesterday) {
+      sheet.deleteRow(i + 1);
+    }
+  }
+}
+
+// ...existing code...
