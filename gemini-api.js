@@ -79,7 +79,8 @@ class GeminiAPI {
     } catch (error) {
       testResults.error = error.message;
       testResults.success = false;
-      console.error('テストエラー:', error.message);
+      Logger.log("テストエラー: " + error.message);
+      ErrorLogger.log("Gemini API Test Error", error.message);
     }
 
     return testResults;
