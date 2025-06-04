@@ -27,28 +27,6 @@ class TriggerManager {
   }
 
   /**
-   * 日次トリガーを設定（後方互換性のため）
-   */
-  static setupDailyTrigger() {
-    try {
-      // 既存のトリガーを削除
-      this.deleteExistingTriggers('pushToNotionDaily');
-
-      // 日次トリガーを作成
-      ScriptApp.newTrigger('pushToNotionDaily')
-        .timeBased()
-        .everyDays(1)
-        .atHour(23) // 23時に実行
-        .create();
-
-      Logger.log("日次トリガーを設定しました。");
-    } catch (error) {
-      Logger.log("Error in setupDailyTrigger: " + error.message);
-      ErrorLogger.log("setupDailyTrigger Error", error.message);
-    }
-  }
-
-  /**
    * 指定した関数名のトリガーを削除
    */
   static deleteExistingTriggers(functionName) {

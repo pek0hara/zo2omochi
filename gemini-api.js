@@ -45,4 +45,43 @@ class GeminiAPI {
       return "エラーが発生しました。";
     }
   }
+
+  /**
+   * Gemini APIのレスポンステスト
+   * @return {Object} テスト結果のオブジェクト
+   */
+  static testResponse() {
+    const testResults = {
+      success: false,
+      responseTime: 0,
+      responseText: '',
+      error: null,
+      timestamp: new Date().toISOString()
+    };
+
+    try {
+      console.log('Gemini APIレスポンステストを開始します...');
+      
+      const startTime = new Date().getTime();
+      const testMessage = "こんにちは";
+      const testPrompt = "簡潔に挨拶を返してください。";
+      
+      const response = this.getMessage(testMessage, testPrompt);
+      const endTime = new Date().getTime();
+      
+      testResults.responseTime = endTime - startTime;
+      testResults.responseText = response;
+      testResults.success = response && !response.includes("エラーが発生しました") && !response.includes("現在応答できません");
+      
+      console.log(`テスト完了 - 成功: ${testResults.success}, 応答時間: ${testResults.responseTime}ms`);
+      console.log(`レスポンス: ${response}`);
+      
+    } catch (error) {
+      testResults.error = error.message;
+      testResults.success = false;
+      console.error('テストエラー:', error.message);
+    }
+
+    return testResults;
+  }
 }
