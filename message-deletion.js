@@ -35,7 +35,7 @@ class MessageDeletion {
       const success = MessageHistory.deleteMessage(latestMessage.rowIndex);
       
       if (success) {
-        const timeString = Utilities.formatDate(latestMessage.timestamp, "Asia/Tokyo", "HH:mm");
+        const timeString = Config.formatDate(latestMessage.timestamp, "HH:mm");
         MessageSender.sendReply(
           replyToken,
           `${timeString}のメッセージ「${latestMessage.messageText}」を削除しました。`

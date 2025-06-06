@@ -10,7 +10,7 @@ class MessageHistory {
   static logToMainSheet(userId, messageText, geminiMessage) {
     try {
       const sheet = this.getMainSheet();
-      const date = new Date();
+      const date = Config.getNow();
       sheet.appendRow([date, userId, messageText, geminiMessage]);
     } catch (error) {
       Logger.log("Error in logToMainSheet: " + error.message);
@@ -26,9 +26,9 @@ class MessageHistory {
       const sheet = this.getMainSheet();
       const data = sheet.getDataRange().getValues();
       
-      const today = new Date();
-      const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-      const todayEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+      const today = Config.getNow();
+      const todayStart = Config.getTodayStart(today);
+      const todayEnd = Config.getTodayEnd(today);
 
       const todaysMessages = [];
       
@@ -39,7 +39,7 @@ class MessageHistory {
         const messageText = row[2];
 
         if (rowUserId === userId && timestamp >= todayStart && timestamp <= todayEnd) {
-          const timeString = Utilities.formatDate(timestamp, "Asia/Tokyo", "HH:mm");
+          const timeString = Config.formatDate(timestamp, "HH:mm");
           todaysMessages.push(`${timeString} ${messageText}`);
         }
       }
@@ -102,9 +102,9 @@ class MessageHistory {
       const sheet = this.getMainSheet();
       const data = sheet.getDataRange().getValues();
       
-      const today = new Date();
-      const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-      const todayEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
+      const today = Config.getNow();
+      const todayStart = Config.getTodayStart(today);
+      const todayEnd = Config.getTodayEnd(today);
 
       for (let i = data.length - 1; i >= 1; i--) {
         const row = data[i];
@@ -112,7 +112,7 @@ class MessageHistory {
         const rowUserId = row[1];
 
         if (rowUserId === userId && timestamp >= todayStart && timestamp <= todayEnd) {
-          const timeFormatted = Utilities.formatDate(timestamp, "Asia/Tokyo", "HH:mm");
+          const timeFormatted = Config.formatDate(timestamp, "HH:mm");
           if (timeFormatted === timeString) {
             return {
               rowIndex: i + 1,

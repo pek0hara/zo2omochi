@@ -13,8 +13,8 @@ class EventTracker {
       const data = sheet.getDataRange().getValues();
       
       // 過去24時間以内の処理済みイベントをチェック
-      const yesterday = new Date();
-      yesterday.setHours(yesterday.getHours() - 24);
+      const now = Config.getNow();
+      const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
       
       for (let i = 1; i < data.length; i++) { // ヘッダー行をスキップ
         if (data[i][1] === webhookEventId && data[i][0] > yesterday) {
@@ -34,7 +34,7 @@ class EventTracker {
   static recordProcessedEvent(webhookEventId) {
     try {
       const sheet = this.getProcessedEventsSheet();
-      sheet.appendRow([new Date(), webhookEventId]);
+      sheet.appendRow([Config.getNow(), webhookEventId]);
       
       // 古いレコードを削除（24時間以前のものを削除）
       this.cleanupOldEvents(sheet);
@@ -65,8 +65,8 @@ class EventTracker {
   static cleanupOldEvents(sheet) {
     try {
       const data = sheet.getDataRange().getValues();
-      const yesterday = new Date();
-      yesterday.setHours(yesterday.getHours() - 24);
+      const now = Config.getNow();
+      const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
       
       // 削除対象の行を特定（後ろから削除するため逆順でチェック）
       const rowsToDelete = [];

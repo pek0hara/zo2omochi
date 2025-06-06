@@ -41,3 +41,27 @@ function doPost(e) {
     return ResponseHelper.createErrorResponse(error.message);
   }
 }
+
+/**
+ * 時間ごとのトリガー関数（GASのトリガーから呼び出される）
+ */
+function hourlyTrigger() {
+  try {
+    NotionIntegration.pushToNotionHourly();
+    console.log('Hourly push to Notion completed successfully');
+  } catch (error) {
+    console.error('Error in hourly trigger:', error);
+  }
+}
+
+/**
+ * 月次レポートのトリガー関数（GASのトリガーから呼び出される）
+ */
+function monthlyReportTrigger() {
+  try {
+    NotionIntegration.pushToNotionMonthly();
+    console.log('Monthly push to Notion completed successfully');
+  } catch (error) {
+    console.error('Error in monthly trigger:', error);
+  }
+}

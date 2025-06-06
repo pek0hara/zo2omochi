@@ -10,7 +10,7 @@ class ErrorLogger {
   static log(errorMessage, stackTrace = "") {
     try {
       const sheet = this.getErrorSheet();
-      const date = new Date();
+      const date = Config.getNow();
       sheet.appendRow([date, errorMessage, stackTrace]);
     } catch (error) {
       Logger.log("Error in ErrorLogger.log: " + error.message);
@@ -23,7 +23,7 @@ class ErrorLogger {
   static logDebug(debugMessage) {
     try {
       const sheet = this.getDebugSheet();
-      const date = new Date();
+      const date = Config.getNow();
       sheet.appendRow([date, debugMessage]);
     } catch (error) {
       Logger.log("Error in ErrorLogger.logDebug: " + error.message);

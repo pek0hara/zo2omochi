@@ -9,15 +9,8 @@ class UserManager {
    */
   static getDisplayName(userId) {
     try {
-      const sheet = this.getUserSheet();
-      const data = sheet.getDataRange().getValues();
-      
-      for (let i = 1; i < data.length; i++) {
-        if (data[i][0] === userId) {
-          return data[i][1] || "";
-        }
-      }
-      return "";
+      const userMap = Config.getUserMap();
+      return userMap[userId] || "";
     } catch (error) {
       Logger.log("Error in getDisplayName: " + error.message);
       return "";
@@ -29,19 +22,9 @@ class UserManager {
    */
   static setUserName(userId, newName) {
     try {
-      const sheet = this.getUserSheet();
-      const data = sheet.getDataRange().getValues();
-      
-      // 既存のユーザーを検索
-      for (let i = 1; i < data.length; i++) {
-        if (data[i][0] === userId) {
-          sheet.getRange(i + 1, 2).setValue(newName);
-          return;
-        }
-      }
-      
-      // 新規ユーザーの場合
-      sheet.appendRow([userId, newName]);
+      const userMap = Config.getUserMap();
+      userMap[userId] = newName;
+      Config.setUserMap(userMap);
     } catch (error) {
       Logger.log("Error in setUserName: " + error.message);
       ErrorLogger.log("setUserName Error", error.message);
@@ -49,17 +32,14 @@ class UserManager {
   }
 
   /**
-   * ユーザーシートを取得（なければ作成）
+   * 全てのユーザー情報を取得
    */
-  static getUserSheet() {
-    const spreadsheet = SpreadsheetApp.openById(Config.getSpreadsheetId());
-    let sheet = spreadsheet.getSheetByName("ユーザー");
-    
-    if (!sheet) {
-      sheet = spreadsheet.insertSheet("ユーザー");
-      sheet.appendRow(["ユーザーID", "名前"]);
+  static getAllUsers() {
+    try {
+      return Config.getUserMap();
+    } catch (error) {
+      Logger.log("Error in getAllUsers: " + error.message);
+      return {};
     }
-    
-    return sheet;
   }
 }

@@ -9,16 +9,14 @@ class NotionIntegration {
    */
   static pushToNotionHourly() {
     try {
-      const now = new Date();
+      // プロジェクト設定のタイムゾーンで現在時刻を取得
+      const now = Config.getNow();
+      
       // 今日の0時0分0秒を明確に設定（日付境界を明確に）
-      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-      const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+      const todayStart = Config.getTodayStart(now);
       
       // 昨日の日付を計算
-      const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-      const yesterdayStart = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 0, 0, 0, 0);
-      const yesterdayEnd = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 23, 59, 59, 999);
-      
+      const yesterday = Config.getYesterday(now);
       const sheet = MessageHistory.getMainSheet();
       const data = sheet.getDataRange().getValues();
 
@@ -37,16 +35,16 @@ class NotionIntegration {
       // データがない場合は何もしない
       if (todayEntries.length === 0) {
         Logger.log("今日のデータがないため、Notion更新をスキップします。（対象期間: " + 
-                   Utilities.formatDate(todayStart, "Asia/Tokyo", "yyyy/MM/dd HH:mm:ss") + 
+                   Config.formatDate(todayStart) + 
                    " - " + 
-                   Utilities.formatDate(now, "Asia/Tokyo", "yyyy/MM/dd HH:mm:ss") + "）");
+                   Config.formatDate(now) + "）");
         return;
       }
       
       Logger.log("今日のデータを " + todayEntries.length + " 件取得しました。（対象期間: " + 
-                 Utilities.formatDate(todayStart, "Asia/Tokyo", "yyyy/MM/dd HH:mm:ss") + 
+                 Config.formatDate(todayStart) + 
                  " - " + 
-                 Utilities.formatDate(now, "Asia/Tokyo", "yyyy/MM/dd HH:mm:ss") + "）");
+                 Config.formatDate(now) + "）");
 
       // 今日の記事が既に存在するかチェック
       const existingPageId = this.findTodayNotionPage(todayStart);
@@ -62,7 +60,8 @@ class NotionIntegration {
         // 最後の更新以降に新しいデータがあるかチェック
         if (lastUpdateTime) {
           const newDataSinceUpdate = todayEntries.filter(row => {
-            return new Date(row[0]) > lastUpdateTime;
+            const rowTimestamp = new Date(row[0]);
+            return rowTimestamp > lastUpdateTime;
           });
           
           if (newDataSinceUpdate.length > 0) {
@@ -97,15 +96,316 @@ class NotionIntegration {
   }
 
   /**
+   * 月次Notion連携メイン関数（実行ごとに1ユーザー）
+   */
+  static pushToNotionMonthly() {
+    try {
+      const processedMonthStr = this.getProcessedMonth(); // "YYYY-MM"
+      const monthlyStatusKey = this.getMonthlyStatusKey(processedMonthStr);
+
+      this.deleteOldMonthlyStatusKeys(monthlyStatusKey);
+
+      const properties = PropertiesService.getScriptProperties();
+      let monthlyStatusJSON = properties.getProperty(monthlyStatusKey);
+      let monthlyStatus = monthlyStatusJSON ? JSON.parse(monthlyStatusJSON) : {};
+
+      // ステータスが初期化されていない場合（その月の初回処理時など）
+      if (Object.keys(monthlyStatus).length === 0) {
+        monthlyStatus = this.initializeMonthlyStatus(processedMonthStr);
+        if (Object.keys(monthlyStatus).length === 0) {
+          Logger.log(processedMonthStr + "に発言のあったユーザーはいませんでした。");
+          properties.setProperty(monthlyStatusKey, JSON.stringify({}));
+          return;
+        }
+        properties.setProperty(monthlyStatusKey, JSON.stringify(monthlyStatus));
+        Logger.log(processedMonthStr + "の月次処理ステータスを初期化しました: " + JSON.stringify(monthlyStatus));
+      }
+
+      // 未処理のユーザーを検索
+      const unprocessedUserId = this.findUnprocessedUser(monthlyStatus);
+      if (!unprocessedUserId) {
+        Logger.log(processedMonthStr + "の全ユーザーの月次Notion連携は完了しています。");
+        return;
+      }
+
+      Logger.log(processedMonthStr + "の未処理ユーザーを発見: " + unprocessedUserId + ". Notionページ作成を開始します。");
+
+      // ユーザーのコメントを取得してNotionページを作成
+      this.processMonthlyUserData(unprocessedUserId, processedMonthStr, monthlyStatus, monthlyStatusKey);
+
+    } catch (error) {
+      Logger.log("Error in pushToNotionMonthly: " + error.message + (error.stack ? "\n" + error.stack : ""));
+      ErrorLogger.log("pushToNotionMonthly Exception", error.message + (error.stack ? "\n" + error.stack : ""));
+    }
+  }
+
+  /**
+   * 実行日基準で「前月」の年月 (YYYY-MM形式) を返す
+   */
+  static getProcessedMonth() {
+    const now = Config.getNow();
+    now.setDate(0); // 前月の末日に設定
+    return Config.formatDate(now, "yyyy-MM");
+  }
+
+  /**
+   * 年月を元に ScriptProperties で使用するキー名を生成
+   */
+  static getMonthlyStatusKey(yyyymm) {
+    return "MONTHLY_EXPORT_STATUS_" + yyyymm;
+  }
+
+  /**
+   * 現在処理中のキーより古い月次ステータスキーを削除
+   */
+  static deleteOldMonthlyStatusKeys(currentProcessingMonthKey) {
+    const properties = PropertiesService.getScriptProperties();
+    const allKeys = properties.getKeys();
+    const currentPrefix = "MONTHLY_EXPORT_STATUS_";
+    const currentSuffix = currentProcessingMonthKey.replace(currentPrefix, "");
+
+    allKeys.forEach(key => {
+      if (key.startsWith(currentPrefix)) {
+        const keySuffix = key.replace(currentPrefix, "");
+        if (keySuffix < currentSuffix) {
+          properties.deleteProperty(key);
+          Logger.log("Deleted old status key: " + key);
+        }
+      }
+    });
+  }
+
+  /**
+   * 月次ステータスを初期化
+   */
+  static initializeMonthlyStatus(processedMonthStr) {
+    const sheet = MessageHistory.getMainSheet();
+    const data = sheet.getDataRange().getValues();
+    const usersInMonth = {};
+
+    // 前月の1日と末日を計算
+    const firstDayOfProcessedMonth = new Date(processedMonthStr + "-01T00:00:00");
+    const tempDate = new Date(firstDayOfProcessedMonth);
+    tempDate.setMonth(tempDate.getMonth() + 1);
+    tempDate.setDate(0); // 前月の末日
+    const lastDayOfProcessedMonth = new Date(tempDate.getFullYear(), tempDate.getMonth(), tempDate.getDate(), 23, 59, 59);
+
+    for (let i = 1; i < data.length; i++) { // ヘッダー行をスキップ
+      const timestamp = new Date(data[i][0]);
+      if (timestamp >= firstDayOfProcessedMonth && timestamp <= lastDayOfProcessedMonth) {
+        const userId = data[i][1];
+        if (userId) {
+          usersInMonth[userId] = false; // 未処理としてマーク
+        }
+      }
+    }
+
+    return usersInMonth;
+  }
+
+  /**
+   * 未処理のユーザーを検索
+   */
+  static findUnprocessedUser(monthlyStatus) {
+    for (const userIdKey in monthlyStatus) {
+      if (monthlyStatus.hasOwnProperty(userIdKey) && !monthlyStatus[userIdKey]) {
+        return userIdKey;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 月次ユーザーデータを処理してNotionページを作成
+   */
+  static processMonthlyUserData(unprocessedUserId, processedMonthStr, monthlyStatus, monthlyStatusKey) {
+    try {
+      const userComments = this.getUserCommentsForMonth(unprocessedUserId, processedMonthStr);
+      
+      if (userComments.length === 0) {
+        Logger.log("ユーザー " + unprocessedUserId + " の " + processedMonthStr + " のコメントは見つかりませんでした。ステータスを更新します。");
+        monthlyStatus[unprocessedUserId] = true;
+        PropertiesService.getScriptProperties().setProperty(monthlyStatusKey, JSON.stringify(monthlyStatus));
+        return;
+      }
+
+      // コメントを時系列順にソート
+      userComments.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+      const userName = UserManager.getDisplayName(unprocessedUserId) || "名前未設定ユーザー (" + unprocessedUserId.substring(0, 8) + ")";
+      const notionPageTitle = userName + "さんの" + processedMonthStr.replace("-", "年") + "月のおきもち";
+
+      // Notionブロックを生成
+      const notionBlocks = this.generateMonthlyNotionBlocks(userComments);
+
+      // Notionページを作成
+      const success = this.createMonthlyNotionPage(notionPageTitle, notionBlocks, processedMonthStr, userName);
+
+      if (success) {
+        Logger.log("Notionページを正常に作成しました for user: " + unprocessedUserId + ", month: " + processedMonthStr + ". Title: " + notionPageTitle);
+        monthlyStatus[unprocessedUserId] = true;
+        PropertiesService.getScriptProperties().setProperty(monthlyStatusKey, JSON.stringify(monthlyStatus));
+      }
+
+    } catch (error) {
+      Logger.log("Error in processMonthlyUserData: " + error.message);
+      ErrorLogger.log("processMonthlyUserData Error", error.message + (error.stack ? "\n" + error.stack : ""));
+    }
+  }
+
+  /**
+   * 指定ユーザーの指定月のコメントを取得
+   */
+  static getUserCommentsForMonth(userId, processedMonthStr) {
+    const sheet = MessageHistory.getMainSheet();
+    const data = sheet.getDataRange().getValues();
+    const userComments = [];
+
+    const firstDayOfProcessedMonth = new Date(processedMonthStr + "-01T00:00:00");
+    const tempDate = new Date(firstDayOfProcessedMonth);
+    tempDate.setMonth(tempDate.getMonth() + 1);
+    tempDate.setDate(0);
+    const lastDayOfProcessedMonth = new Date(tempDate.getFullYear(), tempDate.getMonth(), tempDate.getDate(), 23, 59, 59);
+
+    for (let i = 1; i < data.length; i++) {
+      const timestamp = new Date(data[i][0]);
+      const msgUserId = data[i][1];
+      const message = data[i][2];
+
+      if (msgUserId === userId && timestamp >= firstDayOfProcessedMonth && timestamp <= lastDayOfProcessedMonth) {
+        userComments.push({
+          timestamp: Config.formatDate(timestamp),
+          message: message
+        });
+      }
+    }
+
+    return userComments;
+  }
+
+  /**
+   * 月次レポート用のNotionブロックを生成
+   */
+  static generateMonthlyNotionBlocks(userComments) {
+    const notionBlocks = [];
+
+    // コメントを日付ごとにグループ化
+    const commentsByDate = {};
+    userComments.forEach(comment => {
+      const dateStr = comment.timestamp.substring(0, 10); // "yyyy/MM/dd"
+      if (!commentsByDate[dateStr]) {
+        commentsByDate[dateStr] = [];
+      }
+      // コメントに時刻(HH:mm)を追加
+      commentsByDate[dateStr].push(comment.message + "(" + comment.timestamp.substring(11, 16) + ")");
+    });
+
+    // 日付ごとにブロックを生成
+    const sortedDates = Object.keys(commentsByDate).sort();
+
+    sortedDates.forEach(date => {
+      notionBlocks.push({
+        object: "block",
+        type: "heading_3",
+        heading_3: {
+          rich_text: [{ type: "text", text: { content: date } }]
+        }
+      });
+
+      const messagesForDate = commentsByDate[date];
+      messagesForDate.forEach(message => {
+        notionBlocks.push({
+          object: "block",
+          type: "paragraph",
+          paragraph: {
+            rich_text: [{ type: "text", text: { content: message } }]
+          }
+        });
+      });
+    });
+
+    // LINEリンクのフッターを追加
+    notionBlocks.push({
+      object: "block",
+      type: "paragraph",
+      paragraph: {
+        rich_text: [
+          {
+            type: "text",
+            text: {
+              content: "https://line.me/R/ti/p/@838dxysu",
+              link: { url: "https://line.me/R/ti/p/@838dxysu" },
+            },
+          },
+        ],
+      },
+    });
+
+    return notionBlocks;
+  }
+
+  /**
+   * 月次レポート用のNotionページを作成
+   */
+  static createMonthlyNotionPage(title, blocks, processedMonthStr, userName) {
+    try {
+      const databaseId = Config.getNotionDatabaseId();
+      if (!databaseId) {
+        Logger.log("NOTION_DATABASE_ID が設定されていません。");
+        ErrorLogger.log("Notion Config Error", "NOTION_DATABASE_ID is not set for pushToNotionMonthly");
+        return false;
+      }
+
+      const payload = {
+        parent: { database_id: databaseId },
+        properties: {
+          title: {
+            title: [{ text: { content: title } }]
+          },
+          ラベル: {
+            select: { name: "ひと月のおきもち" }
+          },
+          URL: { url: null },
+          "Liked User": { people: [] },
+          作成者メモ: { 
+            rich_text: [{ text: { content: processedMonthStr + " の " + userName + " のレポート" } }] 
+          },
+        },
+        children: blocks
+      };
+
+      Logger.log("Notion API Payload: " + JSON.stringify(payload).substring(0, 500) + "...");
+
+      const url = "https://api.notion.com/v1/pages";
+      const response = this.sendRequestToNotion(url, "POST", payload);
+
+      if (response.code === 200) {
+        return true;
+      } else {
+        Logger.log("Notionページの作成に失敗しました. Code: " + response.code + ", Body: " + response.body);
+        ErrorLogger.log("Notion API Error pushToNotionMonthly", "Code: " + response.code + ", Body: " + response.body);
+        return false;
+      }
+
+    } catch (error) {
+      Logger.log("Error in createMonthlyNotionPage: " + error.message);
+      ErrorLogger.log("createMonthlyNotionPage Error", error.message);
+      return false;
+    }
+  }
+
+  /**
    * 前日の記事を最終更新
    */
   static finalizePreviousDayArticle(yesterday, allData) {
     try {
-      Logger.log("前日の記事最終更新を開始: " + yesterday.toISOString().slice(0, 10));
+      // 日本時間での日付文字列を生成
+      const yesterdayDateStr = Config.formatDate(yesterday, "yyyy-MM-dd");
+      Logger.log("前日の記事最終更新を開始: " + yesterdayDateStr);
       
       // 前日の正確な時間範囲を設定
-      const yesterdayStart = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 0, 0, 0, 0);
-      const yesterdayEnd = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 23, 59, 59, 999);
+      const yesterdayStart = Config.getTodayStart(yesterday);
+      const yesterdayEnd = Config.getTodayEnd(yesterday);
       
       // 前日のデータを抽出（前日の0時0分0秒から23時59分59秒まで）
       const yesterdayEntries = allData.slice(1).filter(row => {
@@ -115,16 +415,16 @@ class NotionIntegration {
 
       if (yesterdayEntries.length === 0) {
         Logger.log("前日のデータがないため、最終更新をスキップします。（対象期間: " + 
-                   Utilities.formatDate(yesterdayStart, "Asia/Tokyo", "yyyy/MM/dd HH:mm:ss") + 
+                   Config.formatDate(yesterdayStart) + 
                    " - " + 
-                   Utilities.formatDate(yesterdayEnd, "Asia/Tokyo", "yyyy/MM/dd HH:mm:ss") + "）");
+                   Config.formatDate(yesterdayEnd) + "）");
         return;
       }
       
       Logger.log("前日のデータを " + yesterdayEntries.length + " 件取得しました。（対象期間: " + 
-                 Utilities.formatDate(yesterdayStart, "Asia/Tokyo", "yyyy/MM/dd HH:mm:ss") + 
+                 Config.formatDate(yesterdayStart) + 
                  " - " + 
-                 Utilities.formatDate(yesterdayEnd, "Asia/Tokyo", "yyyy/MM/dd HH:mm:ss") + "）");
+                 Config.formatDate(yesterdayEnd) + "）");
 
       // 前日の記事を検索
       const yesterdayPageId = this.findSpecificDateNotionPage(yesterdayStart);
@@ -137,12 +437,8 @@ class NotionIntegration {
       const grouped = {};
       yesterdayEntries.forEach(row => {
         const userId = row[1];
-        const userName = MessageHistory.getDisplayName(userId) || "誰か";
-        const ts = Utilities.formatDate(
-          new Date(row[0]),
-          Session.getScriptTimeZone(),
-          "HH:mm"
-        );
+        const userName = UserManager.getDisplayName(userId) || "誰か";
+        const ts = Config.formatDate(new Date(row[0]), "HH:mm");
         const msg = row[2];
         const geminiMsg = row[3];
 
@@ -175,7 +471,7 @@ class NotionIntegration {
       // 最終的なタイトルを生成
       const prompt = "\n\nあなたはタイトル命名AIです。20文字以内で今日のパワーワードを１つピックアップして！(タイトルだけを返却して)";
       const finalTitle = GeminiAPI.getMessage(contentForTitle, prompt).slice(0, 20);
-      const yesterdayFinalTitle = `${yesterdayStart.toISOString().slice(0, 10)}` + " " + finalTitle;
+      const yesterdayFinalTitle = `${Config.formatDate(yesterdayStart, "yyyy-MM-dd")}` + " " + finalTitle;
 
       // Notionページ本文のブロックを生成
       const notionBlocks = this.generateNotionBlocks(grouped);
@@ -199,12 +495,8 @@ class NotionIntegration {
       const grouped = {};
       todayEntries.forEach(row => {
         const userId = row[1];
-        const userName = MessageHistory.getDisplayName(userId) || "誰か";
-        const ts = Utilities.formatDate(
-          new Date(row[0]),
-          Session.getScriptTimeZone(),
-          "HH:mm"
-        );
+        const userName = UserManager.getDisplayName(userId) || "誰か";
+        const ts = Config.formatDate(new Date(row[0]), "HH:mm");
         const msg = row[2];
         const geminiMsg = row[3];
 
@@ -237,12 +529,12 @@ class NotionIntegration {
       // タイトルは新規投稿があるたびに毎回再生成
       const prompt = "\n\nあなたはタイトル命名AIです。20文字以内で今日のパワーワードを１つピックアップして！(タイトルだけを返却して)";
       const title = GeminiAPI.getMessage(contentForTitle, prompt).slice(0, 20);
-      const todayTitle = `${now.toISOString().slice(0, 10)}` + " " + title;
+      const todayTitle = `${Config.formatDate(now, "yyyy-MM-dd")}` + " " + title;
 
       // Notionページ本文のブロックを生成
       const notionBlocks = this.generateNotionBlocks(grouped);
 
-      const databaseId = Config.getProperty("NOTION_DATABASE_ID");
+      const databaseId = Config.getNotionDatabaseId();
 
       if (existingPageId) {
         // 既存のページを更新
@@ -327,8 +619,9 @@ class NotionIntegration {
    */
   static findTodayNotionPage(today) {
     try {
-      const databaseId = Config.getProperty("NOTION_DATABASE_ID");
-      const todayStr = today.toISOString().slice(0, 10);
+      const databaseId = Config.getNotionDatabaseId();
+      // 日本時間での日付文字列を使用
+      const todayStr = Config.formatDate(today, "yyyy-MM-dd");
       
       const searchPayload = {
         filter: {
@@ -370,8 +663,9 @@ class NotionIntegration {
    */
   static findSpecificDateNotionPage(date) {
     try {
-      const databaseId = Config.getProperty("NOTION_DATABASE_ID");
-      const dateStr = date.toISOString().slice(0, 10);
+      const databaseId = Config.getNotionDatabaseId();
+      // 日本時間での日付文字列を使用
+      const dateStr = Config.formatDate(date, "yyyy-MM-dd");
       
       const searchPayload = {
         filter: {
@@ -409,19 +703,11 @@ class NotionIntegration {
   }
 
   /**
-   * 日次の一括連携（後方互換性のため残す）
-   */
-  static pushToNotionDaily() {
-    Logger.log("Daily push is deprecated. Use pushToNotionHourly instead.");
-    this.pushToNotionHourly();
-  }
-
-  /**
    * NotionにHTTPリクエストを送信
    */
   static sendRequestToNotion(url, method, payload = null) {
     try {
-      const token = Config.getProperty("NOTION_TOKEN");
+      const token = Config.getNotionToken();
       const options = {
         method: method.toUpperCase(),
         headers: {
@@ -589,7 +875,7 @@ class NotionIntegration {
         
         if (data.last_edited_time) {
           const lastEditedTime = new Date(data.last_edited_time);
-          Logger.log("ページの最終更新時刻: " + Utilities.formatDate(lastEditedTime, "Asia/Tokyo", "yyyy/MM/dd HH:mm:ss"));
+          Logger.log("ページの最終更新時刻: " + Config.formatDate(lastEditedTime));
           return lastEditedTime;
         }
       } else {

@@ -138,7 +138,7 @@ class EventProcessor {
     const replyMessage = [
       geminiMessage + "\n",
       ...todaysMessages,
-      `${Utilities.formatDate(new Date(), "Asia/Tokyo", "HH:mm")} ${messageText}`
+      `${Config.formatDate(Config.getNow(), "HH:mm")} ${messageText}`
     ].join("\n");
 
     MessageSender.sendReply(event.replyToken, replyMessage);
