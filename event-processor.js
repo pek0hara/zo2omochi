@@ -136,13 +136,21 @@ class EventProcessor {
     const geminiMessage = GeminiAPI.getMessage(messageText, prompt);
     
     const replyMessage = [
-      geminiMessage + "\n",
+      geminiMessage,
       ...todaysMessages,
       `${Config.formatDate(Config.getNow(), "HH:mm")} ${messageText}`
     ].join("\n");
 
     MessageSender.sendReply(event.replyToken, replyMessage);
     MessageHistory.logToMainSheet(userId, messageText, geminiMessage);
+
+    // Notionへの同期
+    try {
+      NotionIntegration.syncToNotion();
+      console.log('Hourly push to Notion completed successfully');
+    } catch (error) {
+      console.error('Error in hourly trigger:', error);
+    }
 
     return ResponseHelper.createSuccessResponse();
   }

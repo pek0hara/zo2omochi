@@ -7,7 +7,7 @@ class NotionIntegration {
   /**
    * 1時間ごとのNotion連携
    */
-  static pushToNotionHourly() {
+  static syncToNotion() {
     try {
       // プロジェクト設定のタイムゾーンで現在時刻を取得
       const now = Config.getNow();
@@ -90,8 +90,8 @@ class NotionIntegration {
       this.processHourlyUpdate(todayEntries, existingPageId, todayStart, now);
       
     } catch (error) {
-      Logger.log("Error in pushToNotionHourly: " + error.message);
-      ErrorLogger.log("pushToNotionHourly Error", error.message + (error.stack ? "\n" + error.stack : ""));
+      Logger.log("Error in syncToNotion: " + error.message);
+      ErrorLogger.log("syncToNotion Error", error.message + (error.stack ? "\n" + error.stack : "")); // pushToNotionHourly から変更
     }
   }
 

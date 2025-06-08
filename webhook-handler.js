@@ -47,7 +47,7 @@ function doPost(e) {
  */
 function hourlyTrigger() {
   try {
-    NotionIntegration.pushToNotionHourly();
+    NotionIntegration.syncToNotion();
     console.log('Hourly push to Notion completed successfully');
   } catch (error) {
     console.error('Error in hourly trigger:', error);
