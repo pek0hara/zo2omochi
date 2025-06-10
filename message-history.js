@@ -7,11 +7,12 @@ class MessageHistory {
   /**
    * メインシートにログを記録
    */
-  static logToMainSheet(userId, messageText, geminiMessage) {
+  static logToMainSheet(userId, messageText, geminiMessage, quotedMessageId = null, messageId = null) {
     try {
       const sheet = this.getMainSheet();
       const date = Config.getNow();
-      sheet.appendRow([date, userId, messageText, geminiMessage]);
+      // 列順: 日時, ユーザーID, メッセージ本文, Geminiレスポンス, メッセージID, 引用メッセージID
+      sheet.appendRow([date, userId, messageText, geminiMessage, messageId, quotedMessageId]);
     } catch (error) {
       Logger.log("Error in logToMainSheet: " + error.message);
       ErrorLogger.log("logToMainSheet Error", error.message);
@@ -143,6 +144,70 @@ class MessageHistory {
       Logger.log("Error in deleteMessage: " + error.message);
       ErrorLogger.log("deleteMessage Error", error.message);
       return false;
+    }
+  }
+
+  /**
+   * メッセージIDでメッセージを検索
+   */
+  static findMessageById(messageId) {
+    try {
+      const sheet = this.getMainSheet();
+      const data = sheet.getDataRange().getValues();
+      
+      // ヘッダー行をスキップして検索
+      for (let i = 1; i < data.length; i++) {
+        const row = data[i];
+        // 5列目（E列）にmessageIdが記録されている
+        if (row[4] === messageId) { // 実際のメッセージIDでの検索
+          return {
+            rowIndex: i + 1,
+            timestamp: new Date(row[0]),
+            userId: row[1],
+            text: row[2],
+            geminiMessage: row[3],
+            messageId: row[4],
+            quotedMessageId: row[5]
+          };
+        }
+      }
+      
+      return null;
+    } catch (error) {
+      Logger.log("Error in findMessageById: " + error.message);
+      return null;
+    }
+  }
+
+  /**
+   * メッセージIDでメッセージを検索（quotedMessageId用）
+   */
+  static findQuotedMessage(quotedMessageId) {
+    try {
+      const sheet = this.getMainSheet();
+      const data = sheet.getDataRange().getValues();
+      
+      // ヘッダー行をスキップして検索
+      for (let i = 1; i < data.length; i++) {
+        const row = data[i];
+        // 5列目（E列）のmessageIdと照合（quotedMessageIdで指定されたメッセージを探す）
+        if (row[4] === quotedMessageId) { 
+          return {
+            rowIndex: i + 1,
+            timestamp: new Date(row[0]),
+            userId: row[1],
+            text: row[2],
+            geminiMessage: row[3],
+            messageId: row[4],
+            quotedMessageId: row[5]
+          };
+        }
+      }
+      
+      return null;
+    } catch (error) {
+      Logger.log("Error in findQuotedMessage: " + error.message);
+      return null;
     }
   }
 }

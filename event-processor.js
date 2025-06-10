@@ -57,6 +57,10 @@ class EventProcessor {
    * テキストメッセージの処理
    */
   static handleTextMessage(event, userId, botUserId) {
+    // リプライメッセージかどうかをチェック
+    const isReply = event.message.quotedMessageId !== undefined;
+    const quotedMessageId = event.message.quotedMessageId || null;
+    
     // グループメッセージでのメンション処理
     let messageText = this.processMentions(event, botUserId);
     if (messageText === null) {
@@ -65,6 +69,11 @@ class EventProcessor {
     }
 
     const userName = UserManager.getDisplayName(userId);
+
+    // リプライメッセージの場合は特別な処理
+    if (isReply) {
+      return this.handleReplyMessage(messageText, userId, event, quotedMessageId);
+    }
 
     // コマンド処理
     const commandResult = CommandProcessor.processCommand(messageText, event.replyToken, userId, userName);
@@ -80,6 +89,48 @@ class EventProcessor {
 
     // 通常のメッセージ処理
     return this.handleNormalMessage(messageText, userId, event);
+  }
+
+  /**
+   * リプライメッセージの処理
+   */
+  static handleReplyMessage(messageText, userId, event, quotedMessageId) {
+    const userName = UserManager.getDisplayName(userId);
+    
+    // リプライメッセージであることをログに記録
+    const logMessage = `[リプライ] 元メッセージID: ${quotedMessageId}`;
+    Logger.log(`Reply detected - User: ${userId}, QuotedMessageId: ${quotedMessageId}, Text: ${messageText}`);
+    
+    // 自分のログから元メッセージを検索（可能な場合のみ）
+    const quotedMessageInfo = MessageHistory.findQuotedMessage(quotedMessageId);
+    
+    let replyContext = "";
+    if (quotedMessageInfo) {
+      replyContext = `\n[元メッセージ: "${quotedMessageInfo.text}"への返信として]`;
+      Logger.log(`Found quoted message: ${quotedMessageInfo.text}`);
+    } else {
+      // 元メッセージが見つからない場合（ボット記録外のメッセージ）
+      replyContext = `\n[何かのメッセージ（ID: ${quotedMessageId}）への返信として]`;
+      Logger.log(`Quoted message not found in our records: ${quotedMessageId}`);
+    }
+    
+    const todaysMessages = event.source.type === "user" ? 
+      MessageHistory.getTodaysMessages(userId) : [];
+    
+    const prompt = replyContext + "\n\nあなたはLINEBOTです。上記のリプライメッセージに1行でかわいくツッコんでください！";
+    const geminiMessage = GeminiAPI.getMessage(messageText, prompt);
+    
+    const replyMessage = [
+      `💬 ${geminiMessage}`,
+      logMessage,
+      ...todaysMessages,
+      `${Config.formatDate(Config.getNow(), "HH:mm")} ${messageText}`
+    ].join("\n");
+
+    MessageSender.sendReply(event.replyToken, replyMessage);
+    MessageHistory.logToMainSheet(userId, messageText, geminiMessage, quotedMessageId, event.message.id);
+    
+    return ResponseHelper.createSuccessResponse();
   }
 
   /**
@@ -142,7 +193,7 @@ class EventProcessor {
     ].join("\n");
 
     MessageSender.sendReply(event.replyToken, replyMessage);
-    MessageHistory.logToMainSheet(userId, messageText, geminiMessage);
+    MessageHistory.logToMainSheet(userId, messageText, geminiMessage, null, event.message.id);
 
     // Notionへの同期
     try {
