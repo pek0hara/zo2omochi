@@ -391,40 +391,36 @@ class NotionIntegration {
    */
   static processHourlyUpdate(todayEntries, existingPageId, todayStart, now) {
     try {
-      // ユーザーごとにグループ化
-      const grouped = {};
-      todayEntries.forEach(row => {
+      // ユーザーごとのグループ化をやめて、全ての投稿を時刻順でソート
+      const sortedEntries = todayEntries.map(row => {
+        const timestamp = new Date(row[0]);
         const userId = row[1];
+        const message = row[2];
+        const geminiMessage = row[3];
         const userName = UserManager.getDisplayName(userId) || "誰か";
-        const ts = Config.formatDate(new Date(row[0]), "HH:mm");
-        const msg = row[2];
-        const geminiMsg = row[3];
-
-        const userMessageContent = "「" + msg + "」" + "(" + ts + ")";
+        const timeStr = Config.formatDate(timestamp, "HH:mm");
+        
+        const userMessageContent = `${userName} 「${message}」(${timeStr})`;
         let omcchiMessageContent = null;
-        if (geminiMsg) {
-          omcchiMessageContent = "\"( ๑•ᴗ•๑)\" ＜ " + geminiMsg;
+        if (geminiMessage) {
+          omcchiMessageContent = "\"( ๑•ᴗ•๑)\" ＜ " + geminiMessage;
         }
 
-        (grouped[userName] = grouped[userName] || []).push({
-          user: userMessageContent,
-          omochi: omcchiMessageContent,
-        });
-      });
+        return {
+          timestamp: timestamp,
+          userMessage: userMessageContent,
+          omcchiMessage: omcchiMessageContent
+        };
+      }).sort((a, b) => b.timestamp - a.timestamp); // 新しいものが上（降順）
 
       // 本文生成 (Geminiのタイトル生成用)
-      const contentLinesForTitle = [];
-      Object.keys(grouped).forEach(userName => {
-        contentLinesForTitle.push(userName);
-        grouped[userName].forEach(entry => {
-          contentLinesForTitle.push(entry.user);
-          if (entry.omochi) {
-            contentLinesForTitle.push(entry.omochi);
-          }
-        });
-        contentLinesForTitle.push("");
-      });
-      const contentForTitle = contentLinesForTitle.join("\n");
+      const contentForTitle = sortedEntries.map(entry => {
+        let content = entry.userMessage;
+        if (entry.omcchiMessage) {
+          content += "\n" + entry.omcchiMessage;
+        }
+        return content;
+      }).join("\n");
 
       // タイトルは新規投稿があるたびに毎回再生成
       const prompt = "\n\nあなたはタイトル命名AIです。20文字以内で今日のパワーワードを１つピックアップして！(タイトルだけを返却して)";
@@ -432,7 +428,7 @@ class NotionIntegration {
       const todayTitle = `${Config.formatDate(now, "yyyy-MM-dd")}` + " " + title;
 
       // Notionページ本文のブロックを生成
-      const notionBlocks = this.generateNotionBlocks(grouped);
+      const notionBlocks = this.generateNotionBlocks(sortedEntries);
 
       const databaseId = Config.getNotionDatabaseId();
 
@@ -454,44 +450,44 @@ class NotionIntegration {
   /**
    * Notionブロックを生成
    */
-  static generateNotionBlocks(grouped) {
+  static generateNotionBlocks(sortedEntries) {
     const notionBlocks = [];
     
-    Object.keys(grouped).forEach(userName => {
+    // 各投稿を時刻順で表示
+    sortedEntries.forEach(entry => {
+      // ユーザーメッセージを追加
       notionBlocks.push({
         object: "block",
-        type: "heading_3",
-        heading_3: {
+        type: "paragraph",
+        paragraph: {
           rich_text: [
             {
               type: "text",
               text: {
-                content: userName,
+                content: entry.userMessage,
               },
             },
           ],
         },
       });
 
-      grouped[userName].forEach(entry => {
+      // おもちメッセージがある場合は追加
+      if (entry.omcchiMessage) {
         notionBlocks.push({
           object: "block",
           type: "paragraph",
           paragraph: {
-            rich_text: [{ type: "text", text: { content: entry.user } }],
+            rich_text: [
+              {
+                type: "text",
+                text: {
+                  content: entry.omcchiMessage,
+                },
+              },
+            ],
           },
         });
-
-        if (entry.omochi) {
-          notionBlocks.push({
-            object: "block",
-            type: "paragraph",
-            paragraph: {
-              rich_text: [{ type: "text", text: { content: "    " + entry.omochi } }],
-            },
-          });
-        }
-      });
+      }
     });
 
     // LINEリンクのフッターを追加
