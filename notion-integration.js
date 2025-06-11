@@ -15,16 +15,8 @@ class NotionIntegration {
       // 今日の0時0分0秒を明確に設定（日付境界を明確に）
       const todayStart = Config.getTodayStart(now);
       
-      // 昨日の日付を計算
-      const yesterday = Config.getYesterday(now);
       const sheet = MessageHistory.getMainSheet();
       const data = sheet.getDataRange().getValues();
-
-      // 日付変更時（0時台）に前日の記事を最終更新
-      if (now.getHours() === 0) {
-        Logger.log("日付変更を検知しました。前日記事の最終更新を実行します。");
-        this.finalizePreviousDayArticle(yesterday, data);
-      }
 
       // 今日の行だけ抽出（今日の0時0分0秒から現在時刻まで）
       const todayEntries = data.slice(1).filter(row => {
@@ -391,98 +383,6 @@ class NotionIntegration {
       Logger.log("Error in createMonthlyNotionPage: " + error.message);
       ErrorLogger.log("createMonthlyNotionPage Error", error.message);
       return false;
-    }
-  }
-
-  /**
-   * 前日の記事を最終更新
-   */
-  static finalizePreviousDayArticle(yesterday, allData) {
-    try {
-      // 日本時間での日付文字列を生成
-      const yesterdayDateStr = Config.formatDate(yesterday, "yyyy-MM-dd");
-      Logger.log("前日の記事最終更新を開始: " + yesterdayDateStr);
-      
-      // 前日の正確な時間範囲を設定
-      const yesterdayStart = Config.getTodayStart(yesterday);
-      const yesterdayEnd = Config.getTodayEnd(yesterday);
-      
-      // 前日のデータを抽出（前日の0時0分0秒から23時59分59秒まで）
-      const yesterdayEntries = allData.slice(1).filter(row => {
-        const ts = new Date(row[0]);
-        return ts >= yesterdayStart && ts <= yesterdayEnd;
-      });
-
-      if (yesterdayEntries.length === 0) {
-        Logger.log("前日のデータがないため、最終更新をスキップします。（対象期間: " + 
-                   Config.formatDate(yesterdayStart) + 
-                   " - " + 
-                   Config.formatDate(yesterdayEnd) + "）");
-        return;
-      }
-      
-      Logger.log("前日のデータを " + yesterdayEntries.length + " 件取得しました。（対象期間: " + 
-                 Config.formatDate(yesterdayStart) + 
-                 " - " + 
-                 Config.formatDate(yesterdayEnd) + "）");
-
-      // 前日の記事を検索
-      const yesterdayPageId = this.findSpecificDateNotionPage(yesterdayStart);
-      if (!yesterdayPageId) {
-        Logger.log("前日の記事が見つからないため、最終更新をスキップします。");
-        return;
-      }
-
-      // ユーザーごとにグループ化
-      const grouped = {};
-      yesterdayEntries.forEach(row => {
-        const userId = row[1];
-        const userName = UserManager.getDisplayName(userId) || "誰か";
-        const ts = Config.formatDate(new Date(row[0]), "HH:mm");
-        const msg = row[2];
-        const geminiMsg = row[3];
-
-        const userMessageContent = "「" + msg + "」" + "(" + ts + ")";
-        let omcchiMessageContent = null;
-        if (geminiMsg) {
-          omcchiMessageContent = "\"( ๑•ᴗ•๑)\" ＜ " + geminiMsg;
-        }
-
-        (grouped[userName] = grouped[userName] || []).push({
-          user: userMessageContent,
-          omochi: omcchiMessageContent,
-        });
-      });
-
-      // 本文生成 (Geminiのタイトル生成用)
-      const contentLinesForTitle = [];
-      Object.keys(grouped).forEach(userName => {
-        contentLinesForTitle.push(userName);
-        grouped[userName].forEach(entry => {
-          contentLinesForTitle.push(entry.user);
-          if (entry.omochi) {
-            contentLinesForTitle.push(entry.omochi);
-          }
-        });
-        contentLinesForTitle.push("");
-      });
-      const contentForTitle = contentLinesForTitle.join("\n");
-
-      // 最終的なタイトルを生成
-      const prompt = "\n\nあなたはタイトル命名AIです。20文字以内で今日のパワーワードを１つピックアップして！(タイトルだけを返却して)";
-      const finalTitle = GeminiAPI.getMessage(contentForTitle, prompt).slice(0, 20);
-      const yesterdayFinalTitle = `${Config.formatDate(yesterdayStart, "yyyy-MM-dd")}` + " " + finalTitle;
-
-      // Notionページ本文のブロックを生成
-      const notionBlocks = this.generateNotionBlocks(grouped);
-
-      // 前日の記事を最終更新
-      this.updateNotionPage(yesterdayPageId, yesterdayFinalTitle, notionBlocks);
-      Logger.log("前日の記事を最終更新しました: " + yesterdayPageId + ", タイトル: " + yesterdayFinalTitle);
-
-    } catch (error) {
-      Logger.log("Error in finalizePreviousDayArticle: " + error.message);
-      ErrorLogger.log("finalizePreviousDayArticle Error", error.message + (error.stack ? "\n" + error.stack : ""));
     }
   }
 
