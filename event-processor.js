@@ -129,19 +129,10 @@ class EventProcessor {
    * 通常のメッセージ処理
    */
   static handleNormalMessage(messageText, userId, event) {
-    const todaysMessages = event.source.type === "user" ? 
-      MessageHistory.getTodaysMessages(userId) : [];
-    
     const prompt = "\n\nあなたはLINEBOTです。上記の発言に1行でかわいくツッコんでください！";
     const geminiMessage = GeminiAPI.getMessage(messageText, prompt);
-    
-    const replyMessage = [
-      geminiMessage,
-      ...todaysMessages,
-      `${Config.formatDate(Config.getNow(), "HH:mm")} ${messageText}`
-    ].join("\n");
 
-    MessageSender.sendReply(event.replyToken, replyMessage);
+    MessageSender.sendReply(event.replyToken, geminiMessage);
     MessageHistory.logToMainSheet(userId, messageText, geminiMessage);
 
     // Notionへの同期

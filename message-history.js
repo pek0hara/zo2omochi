@@ -19,39 +19,6 @@ class MessageHistory {
   }
 
   /**
-   * 今日のメッセージを取得
-   */
-  static getTodaysMessages(userId) {
-    try {
-      const sheet = this.getMainSheet();
-      const data = sheet.getDataRange().getValues();
-      
-      const today = Config.getNow();
-      const todayStart = Config.getTodayStart(today);
-      const todayEnd = Config.getTodayEnd(today);
-
-      const todaysMessages = [];
-      
-      for (let i = 1; i < data.length; i++) {
-        const row = data[i];
-        const timestamp = new Date(row[0]);
-        const rowUserId = row[1];
-        const messageText = row[2];
-
-        if (rowUserId === userId && timestamp >= todayStart && timestamp <= todayEnd) {
-          const timeString = Config.formatDate(timestamp, "HH:mm");
-          todaysMessages.push(`${timeString} ${messageText}`);
-        }
-      }
-
-      return todaysMessages;
-    } catch (error) {
-      Logger.log("Error in getTodaysMessages: " + error.message);
-      return [];
-    }
-  }
-
-  /**
    * メインシートを取得（なければ作成）
    */
   static getMainSheet() {
